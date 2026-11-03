@@ -3,3 +3,41 @@
 .camera-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}.camera-actions button{flex:1;min-width:140px}.camera-picker{display:flex;flex-direction:column;gap:6px;margin-top:12px;font-weight:600}.camera-picker select{padding:10px;border-radius:10px;border:1px solid #e6a8c5;background:white;color:#50344c}.camera-prompt{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;background:#271c30d9;color:white;padding:20px;font-weight:600;line-height:2}
 
 .share-page{max-width:620px;margin:auto;padding:65px 24px;text-align:center}.share-page h1{font-family:'Playfair Display',Georgia,serif;color:#51324b;font-size:clamp(34px,5vw,52px)}.share-page h1 em{color:#e17ba8}.share-page>p:not(.eyebrow){color:#947a90;line-height:1.7}.share-download{display:block;width:min(100%,300px);margin:14px auto;text-decoration:none}.share-page small{display:block;margin-top:22px;color:#aa8e9e}.share-error{padding:14px;border-radius:10px;background:#ffe5eb;color:#963657}
+
+.frame-picker-heading{margin-top:38px}
+.frame-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
+.frame-card{min-width:0;padding:8px;border:2px solid #f0e2eb;border-radius:14px;background:white;color:#76566e;display:flex;flex-direction:column;align-items:stretch;gap:8px}
+.frame-card:hover{transform:translateY(-2px)}
+.frame-card.active{border-color:#e67bab;background:#fff1f8;box-shadow:0 0 0 2px #e67bab33}
+.frame-card-preview{position:relative;display:block;width:100%;aspect-ratio:1333/2000;overflow:hidden;border:1px solid #ead3df;border-radius:8px;background:#fff1f6}
+.frame-card-preview img{display:block;width:100%;height:100%;object-fit:contain}
+.frame-preview-gold{background:#f5e4ba;border-color:#c89b44}
+.frame-preview-neon{background:#29204e;border-color:#ff7ef2}
+.frame-demo-photo{position:absolute;inset:10%;display:grid;grid-template-rows:1fr 1fr;gap:7%}
+.frame-demo-photo span{display:grid;place-items:center;border:5px solid white;border-radius:8px;background:#fffafd;color:#e48eaf;font-size:clamp(12px,2vw,24px)}
+.frame-preview-gold .frame-demo-photo span{border-color:#c89b44;color:#c89b44}
+.frame-preview-neon .frame-demo-photo span{border-color:#ff7ef2;background:#44365f;color:#fff}
+@media(max-width:900px){.frame-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:480px){.frame-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.sticker-stage{position:relative;width:100%;max-width:420px;overflow:visible;touch-action:none}
+.sticker-stage>img{display:block;width:100%;height:auto}
+.sticker-target{position:absolute;aspect-ratio:1;border:2px solid transparent;border-radius:50%;padding:0;background:transparent;cursor:grab;touch-action:none}
+.sticker-target:active{cursor:grabbing}
+.sticker-target.selected{border-color:#e67bab;background:#e67bab20;box-shadow:0 0 0 2px #fff,0 0 0 4px #e67bab}
+.sticker-toolbar{position:absolute;z-index:10000;display:flex;gap:4px;padding:5px;border:1px solid #f0cadd;border-radius:12px;background:#fff;box-shadow:0 4px 16px #583e5033;white-space:nowrap}
+.sticker-toolbar button{display:grid;place-items:center;width:32px;height:32px;border:0;border-radius:8px;background:#fff1f8;color:#8e4770}
+.sticker-toolbar button svg{display:block;width:18px;height:18px}
+.sticker-toolbar button:hover{background:#f8d7e8}
+.sticker-count{float:right;color:#a87f9d;font-size:12px}
+.sticker-library{max-height:310px;overflow:auto;margin:10px 0 20px;padding:10px;border:1px solid #f3dfea;border-radius:12px;background:#fffafd}
+.sticker-group h4{margin:4px 0 7px;color:#98758f;font-size:12px}
+.sticker-palette{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;margin-bottom:12px}
+.sticker-option{display:grid;place-items:center;min-width:0;aspect-ratio:1;border:1px solid #f0e2eb;border-radius:10px;background:white}
+.sticker-option span{font-size:24px;line-height:1}
+.sticker-option:hover{border-color:#e67bab;background:#fff1f8;transform:scale(1.05)}
+
+.content:has(.camera-grid)>p.sub{font-size:0}
+.content:has(.camera-grid)>p.sub::after{content:"The selected frame determines how many photos to take.";font-size:14px}
+.camera-grid .link{font-size:0}
+.camera-grid .link::after{content:"← Change frame";font-size:14px}
