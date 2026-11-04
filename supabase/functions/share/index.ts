@@ -5,6 +5,9 @@ const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
 const maxPngBytes = 3 * 1024 * 1024;
 const maxGifBytes = 4 * 1024 * 1024;
 const maxRequestBytes = 5 * 1024 * 1024;
+const maxDirectPngBytes = 5 * 1024 * 1024;
+const directPngSignedUrlSeconds = 24 * 60 * 60;
+const directPngMaxUploadsPerHour = 5;
 const signedUrlMaxAgeSeconds = 7 * 24 * 60 * 60;
 const encoder = new TextEncoder();
 const corsHeaders = {
@@ -63,6 +66,107 @@ function isPng(bytes: Uint8Array): boolean {
     bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e &&
     bytes[3] === 0x47 && bytes[4] === 0x0d && bytes[5] === 0x0a &&
     bytes[6] === 0x1a && bytes[7] === 0x0a;
+}
+
+async function getRateLimitKey(request: Request): Promise<string> {
+  const clientIp = request.headers.get("cf-connecting-ip")?.trim() ||
+    request.headers.get("x-real-ip")?.trim() ||
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    "unknown";
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(serviceRoleKey ?? ""),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const digest = new Uint8Array(
+    await crypto.subtle.sign("HMAC", key, encoder.encode(clientIp)),
+  );
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function allowDirectPngUpload(request: Request): Promise<boolean> {
+  const { data, error } = await getClient().rpc(
+    "consume_purikura_share_rate_limit",
+    {
+      p_client_key: await getRateLimitKey(request),
+      p_max_requests: directPngMaxUploadsPerHour,
+      p_window_seconds: 60 * 60,
+    },
+  );
+  if (error) throw new Error("Could not check upload rate limit");
+  return data === true;
+}
+
+async function createDirectPngShare(
+  form: FormData,
+): Promise<Response> {
+  const pngFile = form.get("png");
+  if (
+    !(pngFile instanceof File) ||
+    pngFile.type !== "image/png" ||
+    pngFile.size === 0 ||
+    pngFile.size > maxDirectPngBytes
+  ) {
+    return jsonResponse({ error: "invalid_png_type_or_size" }, 413);
+  }
+
+  const png = new Uint8Array(await pngFile.arrayBuffer());
+  if (!isPng(png)) {
+    return jsonResponse({ error: "file_contents_do_not_match_mime_type" }, 415);
+  }
+
+  const photoId = crypto.randomUUID();
+  const objectPath = `${photoId}.png`;
+  const createdAt = new Date();
+  const storage = getClient().storage.from("purikura-photos");
+  const { error: uploadError } = await storage.upload(objectPath, png, {
+    contentType: "image/png",
+    upsert: false,
+  });
+  if (uploadError) {
+    return jsonResponse({ error: "upload_failed_retry" }, 502);
+  }
+
+  const shareExpiresAt = new Date(
+    Date.now() + directPngSignedUrlSeconds * 1000,
+  ).toISOString();
+  const { error: recordError } = await getClient()
+    .from("purikura_shared_photos")
+    .insert({
+      id: photoId,
+      object_path: objectPath,
+      created_at: createdAt.toISOString(),
+      expires_at: shareExpiresAt,
+    });
+  if (recordError) {
+    await storage.remove([objectPath]);
+    return jsonResponse({ error: "share_record_creation_failed_retry" }, 503);
+  }
+
+  const { data: signedUrlData, error: signedUrlError } =
+    await storage.createSignedUrl(
+      objectPath,
+      directPngSignedUrlSeconds,
+      { download: "purikura-studio.png" },
+    );
+  if (signedUrlError || !signedUrlData?.signedUrl) {
+    const { error: removeError } = await storage.remove([objectPath]);
+    if (!removeError) {
+      await getClient()
+        .from("purikura_shared_photos")
+        .delete()
+        .eq("id", photoId);
+    }
+    return jsonResponse({ error: "signed_url_creation_failed_retry" }, 502);
+  }
+
+  return jsonResponse({
+    ok: true,
+    signedUrl: signedUrlData.signedUrl,
+    expiresAt: shareExpiresAt,
+  });
 }
 
 function isGif(bytes: Uint8Array): boolean {
@@ -374,7 +478,21 @@ Deno.serve(async (request: Request) => {
 
   try {
     if (request.headers.get("content-type")?.includes("multipart/form-data")) {
+      const contentLength = Number(request.headers.get("content-length"));
+      if (Number.isFinite(contentLength) && contentLength > maxDirectPngBytes + 65536) {
+        return jsonResponse({ error: "request_too_large" }, 413);
+      }
       const form = await request.formData();
+      if (!(await allowDirectPngUpload(request))) {
+        return jsonResponse({ error: "upload_rate_limit_exceeded" }, 429);
+      }
+      if (!form.has("token") && !form.has("gif") && form.has("png")) {
+        try {
+          return await createDirectPngShare(form);
+        } catch {
+          return jsonResponse({ error: "share_request_failed_retry" }, 503);
+        }
+      }
       return await createShare(form);
     }
     const body: unknown = await request.json();

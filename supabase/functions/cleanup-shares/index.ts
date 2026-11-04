@@ -1,8 +1,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const bucketName = "purikura-shares";
+const photoBucketName = "purikura-photos";
 const maxBatchSize = 100;
 const staleUploadMs = 60 * 60 * 1000;
+const rateLimitRetentionMs = 24 * 60 * 60 * 1000;
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL");
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -21,6 +23,10 @@ type ExpiredGallery = {
   expires_at: string;
   cleanup_started_at: string | null;
   creation_status: "uploading" | "complete" | "failed" | "cleaning";
+};
+
+type ExpiredPhoto = {
+  object_path: string;
 };
 
 function matchesSecret(provided: string, expected: string): boolean {
@@ -120,6 +126,43 @@ Deno.serve(async (request: Request) => {
     }
     deleted++;
   }
+
+  const { data: expiredPhotos, error: photoQueryError } = await supabase
+    .from("purikura_shared_photos")
+    .select("object_path")
+    .lte("expires_at", now)
+    .order("expires_at", { ascending: true })
+    .limit(maxBatchSize);
+  if (photoQueryError) {
+    failures++;
+  } else {
+    for (const photo of (expiredPhotos ?? []) as ExpiredPhoto[]) {
+      const { error: storageError } = await supabase.storage
+        .from(photoBucketName)
+        .remove([photo.object_path]);
+      if (storageError) {
+        failures++;
+        continue;
+      }
+
+      const { error: deleteError } = await supabase
+        .from("purikura_shared_photos")
+        .delete()
+        .eq("object_path", photo.object_path);
+      if (deleteError) {
+        failures++;
+        continue;
+      }
+      deleted++;
+    }
+  }
+
+  const rateLimitCutoff = new Date(Date.now() - rateLimitRetentionMs).toISOString();
+  const { error: rateLimitCleanupError } = await supabase
+    .from("purikura_share_rate_limits")
+    .delete()
+    .lt("window_started_at", rateLimitCutoff);
+  if (rateLimitCleanupError) failures++;
 
   return Response.json({ deleted, failures });
 });
