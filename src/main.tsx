@@ -11,23 +11,18 @@ type Frame='Classic'|'Gold'|'Neon'|'Vietnam 1'|'Vietnam 2'|'Vietnam 3';
 const layers=[{name:'Sweet Duo',style:'Soft light',layout:'two'},{name:'Dream Grid',style:'Warm tone',layout:'grid'},{name:'Film Strip',style:'Vintage',layout:'strip'},{name:'Mono Mood',style:'Monochrome',layout:'side'}] as const;
 const filters:Filter[]=['Classic','Noir','Summer','Dream'];
 const frames:Frame[]=['Classic','Gold','Neon','Vietnam 1','Vietnam 2','Vietnam 3'];
-const frameAssets:Partial<Record<Frame,string>>={'Vietnam 1':'/frames/vietnam-1.png?v=3','Vietnam 2':'/frames/vietnam-2.png?v=5','Vietnam 3':'/frames/vietnam-3.png?v=7'};
+const frameAssets:Partial<Record<Frame,string>>={'Vietnam 1':'/frames/vietnam-1.png?v=8','Vietnam 2':'/frames/vietnam-2.png?v=8','Vietnam 3':'/frames/vietnam-3.png?v=8'};
 type FramePhotoRegion={x:number;y:number;width:number;height:number};
 const framePhotoRegions:Partial<Record<Frame,FramePhotoRegion[]>>={
   'Vietnam 1':[
-    {x:67,y:111,width:474,height:474},
-    {x:319,y:677,width:474,height:474},
+    {x:24,y:41,width:170,height:168},
+    {x:117,y:243,width:166,height:170},
   ],
-  'Vietnam 2':[{x:0,y:98,width:867,height:717}],
+  'Vietnam 2':[{x:0,y:54,width:445,height:362}],
   'Vietnam 3':[
-    {x:86,y:131,width:747,height:565},
-    {x:108,y:748,width:479,height:476},
+    {x:49,y:66,width:371,height:284},
+    {x:59,y:381,width:240,height:238},
   ],
-};
-const framePhotoCoordinateSizes:Partial<Record<Frame,{width:number;height:number}>>={
-  'Vietnam 1':{width:867,height:1300},
-  'Vietnam 2':{width:867,height:1300},
-  'Vietnam 3':{width:867,height:1300},
 };
 const defaultLayout:number=0;
 function getPhotoCount(frame:Frame){return framePhotoRegions[frame]?.length??2}
@@ -62,14 +57,30 @@ async function renderComposition(images:HTMLImageElement[],layer:number,frame:Fr
     c.height=1200;
     const ctx=c.getContext('2d');
     if(!ctx)throw new Error('Frame canvas unavailable');
-    const coordinateSize=framePhotoCoordinateSizes[frame]??{width:frameImage.naturalWidth,height:frameImage.naturalHeight};
-    const scaleX=c.width/coordinateSize.width,scaleY=c.height/coordinateSize.height;
+    const scaleX=c.width/frameImage.naturalWidth,scaleY=c.height/frameImage.naturalHeight;
+    const photoLayer=document.createElement('canvas');
+    photoLayer.width=c.width;
+    photoLayer.height=c.height;
+    const photoCtx=photoLayer.getContext('2d');
+    if(!photoCtx)throw new Error('Photo layer unavailable');
     regions.forEach((region,index)=>{
-      ctx.save();
-      ctx.filter=cssFilters[filter];
-      drawCover(ctx,images[index%images.length],region.x*scaleX,region.y*scaleY,region.width*scaleX,region.height*scaleY);
-      ctx.restore();
+      photoCtx.save();
+      photoCtx.filter=cssFilters[filter];
+      drawCover(photoCtx,images[index%images.length],region.x*scaleX,region.y*scaleY,region.width*scaleX,region.height*scaleY);
+      photoCtx.restore();
     });
+    const slotMask=document.createElement('canvas');
+    slotMask.width=c.width;
+    slotMask.height=c.height;
+    const maskCtx=slotMask.getContext('2d');
+    if(!maskCtx)throw new Error('Photo slot mask unavailable');
+    maskCtx.drawImage(frameImage,0,0,c.width,c.height);
+    const mask=maskCtx.getImageData(0,0,c.width,c.height);
+    for(let i=3;i<mask.data.length;i+=4)mask.data[i]=255-mask.data[i];
+    maskCtx.putImageData(mask,0,0);
+    photoCtx.globalCompositeOperation='destination-in';
+    photoCtx.drawImage(slotMask,0,0);
+    ctx.drawImage(photoLayer,0,0);
     ctx.drawImage(frameImage,0,0,c.width,c.height);
     drawStickers(ctx,stickers,c.width,c.height);
     return c;
