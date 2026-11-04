@@ -24,6 +24,11 @@ const framePhotoRegions:Partial<Record<Frame,FramePhotoRegion[]>>={
     {x:108,y:748,width:479,height:476},
   ],
 };
+const framePhotoCoordinateSizes:Partial<Record<Frame,{width:number;height:number}>>={
+  'Vietnam 1':{width:867,height:1300},
+  'Vietnam 2':{width:867,height:1300},
+  'Vietnam 3':{width:867,height:1300},
+};
 const defaultLayout:number=0;
 function getPhotoCount(frame:Frame){return framePhotoRegions[frame]?.length??2}
 const stickerGroups=[
@@ -57,7 +62,8 @@ async function renderComposition(images:HTMLImageElement[],layer:number,frame:Fr
     c.height=1200;
     const ctx=c.getContext('2d');
     if(!ctx)throw new Error('Frame canvas unavailable');
-    const scaleX=c.width/frameImage.naturalWidth,scaleY=c.height/frameImage.naturalHeight;
+    const coordinateSize=framePhotoCoordinateSizes[frame]??{width:frameImage.naturalWidth,height:frameImage.naturalHeight};
+    const scaleX=c.width/coordinateSize.width,scaleY=c.height/coordinateSize.height;
     regions.forEach((region,index)=>{
       ctx.save();
       ctx.filter=cssFilters[filter];
