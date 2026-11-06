@@ -11,17 +11,29 @@ type Frame='Classic'|'Gold'|'Neon'|'Vietnam 1'|'Vietnam 2'|'Vietnam 3';
 const layers=[{name:'Sweet Duo',style:'Soft light',layout:'two'},{name:'Dream Grid',style:'Warm tone',layout:'grid'},{name:'Film Strip',style:'Vintage',layout:'strip'},{name:'Mono Mood',style:'Monochrome',layout:'side'}] as const;
 const filters:Filter[]=['Classic','Noir','Summer','Dream'];
 const frames:Frame[]=['Classic','Gold','Neon','Vietnam 1','Vietnam 2','Vietnam 3'];
-const frameAssets:Partial<Record<Frame,string>>={'Vietnam 1':'/frames/vietnam-1.png?v=8','Vietnam 2':'/frames/vietnam-2.png?v=8','Vietnam 3':'/frames/vietnam-3.png?v=8'};
+const frameAssets:Partial<Record<Frame,string>>={'Classic':'/frames/classic-vietnam.png?v=1','Gold':'/frames/gold-vietnam.png?v=1','Neon':'/frames/neon-vietnam.png?v=1','Vietnam 1':'/frames/vietnam-1.png?v=9','Vietnam 2':'/frames/vietnam-2.png?v=9','Vietnam 3':'/frames/vietnam-3.png?v=10'};
 type FramePhotoRegion={x:number;y:number;width:number;height:number};
 const framePhotoRegions:Partial<Record<Frame,FramePhotoRegion[]>>={
+  'Classic':[
+    {x:85,y:114,width:376,height:259},
+    {x:85,y:427,width:376,height:257},
+  ],
+  'Gold':[
+    {x:84,y:114,width:378,height:259},
+    {x:84,y:427,width:378,height:255},
+  ],
+  'Neon':[
+    {x:86,y:114,width:371,height:259},
+    {x:86,y:427,width:371,height:256},
+  ],
   'Vietnam 1':[
-    {x:24,y:41,width:170,height:168},
-    {x:117,y:243,width:166,height:170},
+    {x:70,y:132,width:558,height:564},
+    {x:364,y:792,width:570,height:570},
   ],
   'Vietnam 2':[{x:0,y:54,width:445,height:362}],
   'Vietnam 3':[
-    {x:49,y:66,width:371,height:284},
-    {x:59,y:381,width:240,height:238},
+    {x:134,y:203,width:1173,height:898},
+    {x:167,y:1172,width:762,height:779},
   ],
 };
 const defaultLayout:number=0;
@@ -39,13 +51,84 @@ type StickerInstance={id:string;type:StickerType;x:number;y:number;scale:number;
 const stickerEmojis=Object.fromEntries(stickerGroups.flatMap(group=>group.stickers.map(item=>[item.type,item.emoji]))) as Record<StickerType,string>;
 const cssFilters:Record<Filter,string>={Classic:'none',Noir:'grayscale(1) contrast(1.2)',Summer:'sepia(.2) saturate(1.5) brightness(1.08)',Dream:'saturate(.85) brightness(1.12) contrast(.9) hue-rotate(8deg)'};
 function download(blob:Blob,name:string){const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),3000)}
-function drawCover(ctx:CanvasRenderingContext2D,img:CanvasImageSource,x:number,y:number,w:number,h:number){const iw=(img as HTMLImageElement).naturalWidth|| (img as HTMLVideoElement).videoWidth;const ih=(img as HTMLImageElement).naturalHeight||(img as HTMLVideoElement).videoHeight;const scale=Math.max(w/iw,h/ih),sw=w/scale,sh=h/scale;ctx.drawImage(img,(iw-sw)/2,(ih-sh)/2,sw,sh,x,y,w,h)}
+function drawCover(ctx:CanvasRenderingContext2D,img:CanvasImageSource,x:number,y:number,w:number,h:number){const iw=(img as HTMLImageElement).naturalWidth||(img as HTMLVideoElement).videoWidth||(img as HTMLCanvasElement).width;const ih=(img as HTMLImageElement).naturalHeight||(img as HTMLVideoElement).videoHeight||(img as HTMLCanvasElement).height;const scale=Math.max(w/iw,h/ih),sw=w/scale,sh=h/scale;ctx.drawImage(img,(iw-sw)/2,(ih-sh)/2,sw,sh,x,y,w,h)}
+type CanvasSize={width:number;height:number};
+function getPngExportSize():CanvasSize{
+  const memory=(navigator as Navigator&{deviceMemory?:number}).deviceMemory;
+  const lowMemory=memory!==undefined?memory<=2:window.matchMedia('(pointer: coarse)').matches&&navigator.hardwareConcurrency<=4;
+  return lowMemory?{width:1600,height:2400}:{width:2400,height:3600};
+}
+function canvasToBlob(canvas:HTMLCanvasElement,type:string):Promise<Blob>{return new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('Could not encode image canvas')),type))}
 const frameImageCache=new Map<Frame,Promise<HTMLImageElement>>();
 function loadFrameImage(frame:Frame):Promise<HTMLImageElement>{const source=frameAssets[frame];if(!source)return Promise.reject(new Error(`No image asset configured for ${frame}`));const cached=frameImageCache.get(frame);if(cached)return cached;const pending=new Promise<HTMLImageElement>((resolve,reject)=>{const image=new Image();image.onload=()=>resolve(image);image.onerror=()=>{frameImageCache.delete(frame);reject(new Error(`Could not load frame image: ${source}`))};image.src=source});frameImageCache.set(frame,pending);return pending}
+const frameSlotMaskCache=new Map<Frame,Promise<HTMLCanvasElement>>();
+function loadFrameSlotMask(frame:Frame):Promise<HTMLCanvasElement>{
+  const cached=frameSlotMaskCache.get(frame);
+  if(cached)return cached;
+  const pending=loadFrameImage(frame).then(frameImage=>{
+    const regions=framePhotoRegions[frame];
+    if(!regions)throw new Error(`No photo regions configured for ${frame}`);
+    const source=document.createElement('canvas');
+    source.width=frameImage.naturalWidth;
+    source.height=frameImage.naturalHeight;
+    const sourceCtx=source.getContext('2d');
+    const mask=document.createElement('canvas');
+    mask.width=frameImage.naturalWidth;
+    mask.height=frameImage.naturalHeight;
+    const maskCtx=mask.getContext('2d');
+    if(!sourceCtx||!maskCtx)throw new Error('Photo slot mask unavailable');
+    sourceCtx.drawImage(frameImage,0,0);
+    const sourcePixels=sourceCtx.getImageData(0,0,source.width,source.height);
+    const maskPixels=maskCtx.createImageData(mask.width,mask.height);
+    regions.forEach(region=>{
+      const left=Math.max(0,Math.floor(region.x));
+      const top=Math.max(0,Math.floor(region.y));
+      const right=Math.min(mask.width,Math.ceil(region.x+region.width));
+      const bottom=Math.min(mask.height,Math.ceil(region.y+region.height));
+      for(let y=top;y<bottom;y++)for(let x=left;x<right;x++){
+        const index=(y*mask.width+x)*4;
+        maskPixels.data[index+3]=255-sourcePixels.data[index+3];
+      }
+    });
+    maskCtx.putImageData(maskPixels,0,0);
+    return mask;
+  });
+  frameSlotMaskCache.set(frame,pending);
+  pending.catch(()=>frameSlotMaskCache.delete(frame));
+  return pending;
+}
 function drawStickers(ctx:CanvasRenderingContext2D,stickers:StickerInstance[],width:number,height:number){ctx.save();ctx.textAlign='center';ctx.textBaseline='middle';const fontFamily='"Segoe UI Emoji","Apple Color Emoji",sans-serif';[...stickers].sort((a,b)=>a.z-b.z).forEach(sticker=>{ctx.save();ctx.translate(sticker.x*width,sticker.y*height);ctx.rotate(sticker.rotation*Math.PI/180);ctx.font=`${width*.07*sticker.scale}px ${fontFamily}`;ctx.fillText(stickerEmojis[sticker.type],0,0);ctx.restore()});ctx.restore()}
+function drawFrameComposition(ctx:CanvasRenderingContext2D,photoLayer:HTMLCanvasElement,frameImage:HTMLImageElement,slotMask:HTMLCanvasElement,images:(CanvasImageSource|undefined)[],frame:Frame,filter:Filter,width:number,height:number,frameOpacity:number,stickers:StickerInstance[],activeVideo?:CanvasImageSource,activeSlot=-1){
+  const scaleX=width/frameImage.naturalWidth,scaleY=height/frameImage.naturalHeight;
+  photoLayer.width=width;
+  photoLayer.height=height;
+  const photoCtx=photoLayer.getContext('2d');
+  if(!photoCtx)throw new Error('Photo layer unavailable');
+  photoCtx.clearRect(0,0,width,height);
+  framePhotoRegions[frame]?.forEach((region,index)=>{
+    const image=index===activeSlot&&activeVideo?activeVideo:images.length?images[index%images.length]:undefined;
+    if(!image)return;
+    const x=region.x*scaleX,y=region.y*scaleY,w=region.width*scaleX,h=region.height*scaleY;
+    photoCtx.save();
+    photoCtx.filter=cssFilters[filter];
+    if(index===activeSlot&&activeVideo){photoCtx.translate(2*x+w,0);photoCtx.scale(-1,1)}
+    drawCover(photoCtx,image,x,y,w,h);
+    photoCtx.restore();
+  });
+  photoCtx.globalCompositeOperation='destination-in';
+  photoCtx.drawImage(slotMask,0,0,width,height);
+  photoCtx.globalCompositeOperation='source-over';
+  ctx.clearRect(0,0,width,height);
+  ctx.drawImage(photoLayer,0,0);
+  ctx.save();
+  ctx.globalAlpha=frameOpacity;
+  ctx.drawImage(frameImage,0,0,width,height);
+  ctx.restore();
+  drawStickers(ctx,stickers,width,height);
+}
 type StickerControlIconName='minus'|'plus'|'rotate-counterclockwise'|'rotate-clockwise'|'trash';
 function StickerControlIcon({name}:{name:StickerControlIconName}){return <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{name==='minus'&&<path d="M5 12h14"/>}{name==='plus'&&<path d="M12 5v14M5 12h14"/>}{name==='rotate-counterclockwise'&&<><path d="M3 11a9 9 0 1 1 2.64 6.36"/><path d="M3 4v7h7"/></>}{name==='rotate-clockwise'&&<><path d="M21 11a9 9 0 1 0-2.64 6.36"/><path d="M21 4v7h-7"/></>}{name==='trash'&&<><path d="M4 7h16M10 11v6M14 11v6M5 7l1 14h12l1-14M9 7V4h6v3"/></>}</svg>}
-async function renderComposition(images:HTMLImageElement[],layer:number,frame:Frame,stickers:StickerInstance[],filter:Filter):Promise<HTMLCanvasElement>{
+async function renderComposition(images:HTMLImageElement[],layer:number,frame:Frame,stickers:StickerInstance[],filter:Filter,exportSize?:CanvasSize):Promise<HTMLCanvasElement>{
   const frameSource=frameAssets[frame];
   if(frameSource){
     if(images.length===0)throw new Error('No photos available for the selected frame');
@@ -53,59 +136,37 @@ async function renderComposition(images:HTMLImageElement[],layer:number,frame:Fr
     const regions=framePhotoRegions[frame];
     if(!regions)throw new Error(`No photo regions configured for ${frame}`);
     const c=document.createElement('canvas');
-    c.width=800;
-    c.height=1200;
+    c.width=exportSize?.width??800;
+    c.height=exportSize?.height??1200;
     const ctx=c.getContext('2d');
     if(!ctx)throw new Error('Frame canvas unavailable');
-    const scaleX=c.width/frameImage.naturalWidth,scaleY=c.height/frameImage.naturalHeight;
+    const slotMask=await loadFrameSlotMask(frame);
     const photoLayer=document.createElement('canvas');
-    photoLayer.width=c.width;
-    photoLayer.height=c.height;
-    const photoCtx=photoLayer.getContext('2d');
-    if(!photoCtx)throw new Error('Photo layer unavailable');
-    regions.forEach((region,index)=>{
-      photoCtx.save();
-      photoCtx.filter=cssFilters[filter];
-      drawCover(photoCtx,images[index%images.length],region.x*scaleX,region.y*scaleY,region.width*scaleX,region.height*scaleY);
-      photoCtx.restore();
-    });
-    const slotMask=document.createElement('canvas');
-    slotMask.width=c.width;
-    slotMask.height=c.height;
-    const maskCtx=slotMask.getContext('2d');
-    if(!maskCtx)throw new Error('Photo slot mask unavailable');
-    maskCtx.drawImage(frameImage,0,0,c.width,c.height);
-    const mask=maskCtx.getImageData(0,0,c.width,c.height);
-    for(let i=3;i<mask.data.length;i+=4)mask.data[i]=255-mask.data[i];
-    maskCtx.putImageData(mask,0,0);
-    photoCtx.globalCompositeOperation='destination-in';
-    photoCtx.drawImage(slotMask,0,0);
-    ctx.drawImage(photoLayer,0,0);
-    ctx.drawImage(frameImage,0,0,c.width,c.height);
-    drawStickers(ctx,stickers,c.width,c.height);
+    drawFrameComposition(ctx,photoLayer,frameImage,slotMask,images,frame,filter,c.width,c.height,1,stickers);
     return c;
   }
   const c=document.createElement('canvas');
-  c.width=900;
-  c.height=1200;
+  c.width=exportSize?.width??900;
+  c.height=exportSize?.height??1200;
   const ctx=c.getContext('2d')!;
+  const scaleX=c.width/900,scaleY=c.height/1200;
   ctx.fillStyle=frame==='Gold'?'#f5e4ba':frame==='Neon'?'#29204e':'#fff1f6';
-  ctx.fillRect(0,0,900,1200);
+  ctx.fillRect(0,0,c.width,c.height);
   const positions=layer===1?[[70,125,365,440],[465,125,365,440],[70,595,365,440],[465,595,365,440]]:layer===2?[[165,120,570,445],[165,610,570,445]]:layer===3?[[65,145,370,880],[465,145,370,880]]:[[65,150,770,410],[65,600,770,410]];
   ctx.save();
   ctx.filter=cssFilters[filter];
-  positions.forEach((p,i)=>{ctx.save();ctx.beginPath();ctx.roundRect(p[0],p[1],p[2],p[3],18);ctx.clip();drawCover(ctx,images[i%images.length],...p as [number,number,number,number]);ctx.restore()});
+  positions.forEach((p,i)=>{const x=p[0]*scaleX,y=p[1]*scaleY,w=p[2]*scaleX,h=p[3]*scaleY;ctx.save();ctx.beginPath();ctx.roundRect(x,y,w,h,18*Math.min(scaleX,scaleY));ctx.clip();drawCover(ctx,images[i%images.length],x,y,w,h);ctx.restore()});
   ctx.restore();
   ctx.strokeStyle=frame==='Gold'?'#c89b44':frame==='Neon'?'#ff7ef2':'#ef9fc0';
-  ctx.lineWidth=14;
-  ctx.strokeRect(20,20,860,1160);
+  ctx.lineWidth=14*Math.min(scaleX,scaleY);
+  ctx.strokeRect(20*scaleX,20*scaleY,860*scaleX,1160*scaleY);
   ctx.fillStyle=frame==='Neon'?'#fff':'#aa5e81';
   ctx.textAlign='center';
-  ctx.font='bold 48px Georgia';
-  ctx.fillText('PURIKURA STUDIO',450,83);
+  ctx.font=`bold ${48*Math.min(scaleX,scaleY)}px Georgia`;
+  ctx.fillText('PURIKURA STUDIO',450*scaleX,83*scaleY);
   drawStickers(ctx,stickers,c.width,c.height);
-  ctx.font='25px sans-serif';
-  ctx.fillText('made with love ✦',450,1152);
+  ctx.font=`${25*Math.min(scaleX,scaleY)}px sans-serif`;
+  ctx.fillText('made with love ✦',450*scaleX,1152*scaleY);
   return c;
 }
 type ShareResponse={ok?:boolean;retry?:boolean;error?:string;expiresAt?:string;pngUrl?:string;gifUrl?:string;signedUrl?:string};
@@ -123,6 +184,7 @@ const [filter,setFilter]=useState<Filter>('Classic');
 const [countdown,setCountdown]=useState(3);
 const [remaining,setRemaining]=useState<number|null>(null);
 const [shots,setShots]=useState<string[]>([]);
+const [activeShotIndex,setActiveShotIndex]=useState(0);
 const [stickerInstances,setStickerInstances]=useState<StickerInstance[]>([]);
 const [selectedStickerId,setSelectedStickerId]=useState<string|null>(null);
 const [canUndo,setCanUndo]=useState(false);
@@ -146,6 +208,59 @@ const [composite,setComposite]=useState('');
 const [cameraStatus,setCameraStatus]=useState<'off'|'opening'|'ready'|'error'>('off');
 const [devices,setDevices]=useState<MediaDeviceInfo[]>([]);
 const [deviceId,setDeviceId]=useState('');
+useEffect(()=>{
+  const video=videoRef.current;
+  const wrapper=video?.parentElement;
+  if(screen!=='Camera'||!frameAssets[selectedFrame]||!video||!wrapper)return;
+  let stale=false;
+  let animation=0;
+  const previousDisplay=video.style.display;
+  const canvas=document.createElement('canvas');
+  const photoLayer=document.createElement('canvas');
+  canvas.width=800;
+  canvas.height=1200;
+  canvas.className='camera-live-frame';
+  canvas.setAttribute('aria-label','Live camera preview in the selected frame');
+  wrapper.classList.add('camera-framed');
+  video.style.display='none';
+  wrapper.insertBefore(canvas,video.nextSibling);
+  const ctx=canvas.getContext('2d');
+  if(!ctx){
+    setError('Camera frame preview is unavailable.');
+    return()=>{canvas.remove();wrapper.classList.remove('camera-framed');video.style.display=previousDisplay};
+  }
+  Promise.all([
+    loadFrameImage(selectedFrame),
+    loadFrameSlotMask(selectedFrame),
+    Promise.all(shots.map(src=>new Promise<HTMLImageElement>((resolve,reject)=>{const image=new Image();image.onload=()=>resolve(image);image.onerror=reject;image.src=src}))),
+  ]).then(([frameImage,slotMask,capturedImages])=>{
+    if(stale)return;
+    canvas.height=Math.round(canvas.width*frameImage.naturalHeight/frameImage.naturalWidth);
+    const render=()=>{
+      if(stale)return;
+      const liveVideo=cameraStatus==='ready'&&hasCurrentCameraFrame(video)?video:undefined;
+      try{
+        drawFrameComposition(ctx,photoLayer,frameImage,slotMask,capturedImages,selectedFrame,filter,canvas.width,canvas.height,.45,[],liveVideo,activeShotIndex);
+      }catch(reason){
+        console.error('Could not render live frame preview',reason);
+        setError('Could not render live frame preview.');
+        return;
+      }
+      if(liveVideo)animation=window.requestAnimationFrame(render);
+    };
+    render();
+  }).catch(reason=>{
+    console.error('Could not load live frame preview',reason);
+    if(!stale)setError('Could not load live frame preview.');
+  });
+  return()=>{
+    stale=true;
+    window.cancelAnimationFrame(animation);
+    canvas.remove();
+    wrapper.classList.remove('camera-framed');
+    video.style.display=previousDisplay;
+  };
+},[screen,cameraStatus,selectedFrame,shots,activeShotIndex,filter]);
 function recordStickerUndo(snapshot:StickerInstance[]){const history=[...stickerHistoryRef.current,snapshot];if(history.length>50)history.shift();stickerHistoryRef.current=history;setCanUndo(true)}
 function commitStickers(next:StickerInstance[]){recordStickerUndo(stickerInstancesRef.current);stickerInstancesRef.current=next;setStickerInstances(next)}
 function updateStickers(next:StickerInstance[]){stickerInstancesRef.current=next;setStickerInstances(next)}
@@ -164,14 +279,22 @@ async function openCamera(id?:string){
   setError('');setCameraStatus('opening');
   streamRef.current?.getTracks().forEach(track=>track.stop());streamRef.current=null;
   try{
-    const constraints:MediaStreamConstraints={audio:false,video:id?{deviceId:{exact:id}}:{width:{ideal:1280},height:{ideal:960},facingMode:'user'}};
-    const stream=await navigator.mediaDevices.getUserMedia(constraints);
+    const selection:MediaTrackConstraints=id?{deviceId:{exact:id}}:{facingMode:'user'};
+    let stream:MediaStream;
+    try{
+      stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{...selection,width:{ideal:1920,max:2560},height:{ideal:1080,max:1440},frameRate:{ideal:30,max:30}}});
+    }catch(reason){
+      if(!(reason instanceof DOMException)||reason.name!=='OverconstrainedError')throw reason;
+      stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{...selection,width:{ideal:1920},height:{ideal:1080},frameRate:{ideal:30}}});
+    }
     if(screenRef.current!=='Camera'){stream.getTracks().forEach(t=>t.stop());return}
     streamRef.current=stream;
     const video=videoRef.current;
     if(!video){stream.getTracks().forEach(t=>t.stop());return}
     video.srcObject=stream;
     await video.play();
+    const reportResolution=()=>{const settings=stream.getVideoTracks()[0]?.getSettings();console.info('Camera resolution',{videoWidth:video.videoWidth,videoHeight:video.videoHeight,trackWidth:settings?.width,trackHeight:settings?.height,frameRate:settings?.frameRate})};
+    if(video.videoWidth>0&&video.videoHeight>0)reportResolution();else video.addEventListener('loadedmetadata',reportResolution,{once:true});
     setCameraStatus('ready');
     // Device labels are generally available after camera permission is granted.
     // Enumeration failure must not turn an already-working camera into an error.
@@ -191,11 +314,11 @@ useEffect(()=>()=>{streamRef.current?.getTracks().forEach(t=>t.stop())},[]);
 useEffect(()=>{if(screen!=='Preview'||shots.length===0)return;let stale=false;Promise.all(shots.map(src=>new Promise<HTMLImageElement>((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=src}))).then(async images=>{const canvas=await renderComposition(images,defaultLayout,selectedFrame,stickerInstances,filter);if(!stale){setQr('');setShareExpiresAt('');setDownloadNotice('');setComposite(canvas.toDataURL('image/png'))}}).catch(reason=>{console.error('Could not render preview',reason);if(!stale)setError('Could not render preview')});return()=>{stale=true}},[screen,shots,selectedFrame,stickerInstances,filter]);
 if(String(screen)==='ChooseLayer')return <main className="app"><header><div className="logo">✿ purikura<span>studio</span></div><div className="header-right">✦ your kawaii photo booth ✦</div></header><div className="shell"><div className="topline"><span>✦ PHOTO MAGIC ✦</span><span>STEP 01 / 03</span></div><section className="content"><p className="eyebrow">01 — PICK YOUR FRAME</p><h2>Choose your <em>frame</em> ✧</h2><p className="sub">Each frame sets up the right number of photos and its own composition.</p><div className="frame-grid" role="group" aria-label="Choose a frame">{frames.map(f=><button type="button" className={'frame-card '+(selectedFrame===f?'active':'')} key={f} onClick={()=>setSelectedFrame(f)} aria-pressed={selectedFrame===f}><span className={'frame-card-preview frame-preview-'+f.toLowerCase().replace(' ','-')}>{frameAssets[f]?<img src={frameAssets[f]} alt="" loading="lazy"/>:<span className="frame-demo-photo"><span>♡</span><span>♡</span></span>}</span><b>{f}</b></button>)}</div><div className="actions"><button className="secondary" onClick={()=>setScreen('Home')}>← Back</button><button className="primary" onClick={()=>setScreen('Camera')}>Start →</button></div></section></div><footer>made with ♡ · purikura studio · your memories, your magic</footer></main>;
 function wait(ms:number){return new Promise<void>(resolve=>{timerRef.current=window.setTimeout(resolve,ms)})}
-async function capture(){const video=videoRef.current;if(cameraStatus!=='ready'||!video||!hasCurrentCameraFrame(video)){setError('Camera image is not ready yet. Wait for the live preview before taking photos.');return}cancelled.current=false;setBusy(true);setError('');const result:string[]=[];const photoCount=getPhotoCount(selectedFrame);try{for(let shot=0;shot<photoCount;shot++){for(let t=countdown;t>0;t--){if(cancelled.current)return;setRemaining(t);await wait(1000)}if(cancelled.current)return;const v=videoRef.current;if(!v||!hasCurrentCameraFrame(v)){setError('Camera image was interrupted. Reopen the camera and try again.');return}const c=document.createElement('canvas');c.width=900;c.height=675;const ctx=c.getContext('2d')!;ctx.translate(c.width,0);ctx.scale(-1,1);drawCover(ctx,v,0,0,c.width,c.height);result.push(c.toDataURL('image/jpeg',.94));setRemaining(null);await wait(350)}if(cancelled.current)return;setShots(result);setScreen('Preview')}finally{setBusy(false);setRemaining(null)}}
-async function renderCurrentComposition(){if(shots.length===0)throw new Error('No photos available to render');const images=await Promise.all(shots.map(src=>new Promise<HTMLImageElement>((resolve,reject)=>{const image=new Image();image.onload=()=>resolve(image);image.onerror=()=>reject(new Error('Could not load a captured photo'));image.src=src})));return renderComposition(images,defaultLayout,selectedFrame,stickerInstances,filter)}
-async function savePng(){if(!shots.length)return;setDownloadNotice('');setError('');try{const canvas=await renderCurrentComposition();const blob=await(await fetch(canvas.toDataURL('image/png'))).blob();const file=new File([blob],'purikura-studio.png',{type:'image/png'});const isMobile=navigator.maxTouchPoints>0&&window.matchMedia('(pointer: coarse)').matches;if(isMobile&&navigator.share&&navigator.canShare?.({files:[file]})){try{await navigator.share({files:[file],title:'Purikura Studio photo'});return}catch(reason){if(reason instanceof DOMException&&reason.name==='AbortError')return;console.warn('Photo sharing failed; falling back to download',reason)}}download(blob,'purikura-studio.png');if(isMobile)setDownloadNotice('The PNG was downloaded. To save it to Photos, open the image or use your browser share menu; Downloads and Photos are separate.')}catch(reason){console.error('Could not render PNG',reason);setError('Could not render PNG')}}
+async function capture(){const video=videoRef.current;if(cameraStatus!=='ready'||!video||!hasCurrentCameraFrame(video)){setError('Camera image is not ready yet. Wait for the live preview before taking photos.');return}cancelled.current=false;setBusy(true);setError('');const result:string[]=[];const photoCount=getPhotoCount(selectedFrame);setShots([]);setActiveShotIndex(0);try{for(let shot=0;shot<photoCount;shot++){setActiveShotIndex(shot);for(let t=countdown;t>0;t--){if(cancelled.current)return;setRemaining(t);await wait(1000)}if(cancelled.current)return;const v=videoRef.current;if(!v||!hasCurrentCameraFrame(v)){setError('Camera image was interrupted. Reopen the camera and try again.');return}const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;const ctx=c.getContext('2d');if(!ctx)throw new Error('Photo canvas unavailable');ctx.translate(c.width,0);ctx.scale(-1,1);ctx.drawImage(v,0,0,c.width,c.height);result.push(c.toDataURL('image/jpeg',.94));setShots([...result]);setActiveShotIndex(Math.min(shot+1,photoCount-1));setRemaining(null);await wait(350)}if(cancelled.current)return;setShots(result);setScreen('Preview')}finally{setBusy(false);setRemaining(null)}}
+async function renderCurrentComposition(forPngExport=false){if(shots.length===0)throw new Error('No photos available to render');const images=await Promise.all(shots.map(src=>new Promise<HTMLImageElement>((resolve,reject)=>{const image=new Image();image.onload=()=>resolve(image);image.onerror=()=>reject(new Error('Could not load a captured photo'));image.src=src})));return renderComposition(images,defaultLayout,selectedFrame,stickerInstances,filter,forPngExport?getPngExportSize():undefined)}
+async function savePng(){if(!shots.length)return;setDownloadNotice('');setError('');try{const canvas=await renderCurrentComposition(true);const blob=await canvasToBlob(canvas,'image/png');const file=new File([blob],'purikura-studio.png',{type:'image/png'});const isMobile=navigator.maxTouchPoints>0&&window.matchMedia('(pointer: coarse)').matches;if(isMobile&&navigator.share&&navigator.canShare?.({files:[file]})){try{await navigator.share({files:[file],title:'Purikura Studio photo'});return}catch(reason){if(reason instanceof DOMException&&reason.name==='AbortError')return;console.warn('Photo sharing failed; falling back to download',reason)}}download(blob,'purikura-studio.png');if(isMobile)setDownloadNotice('The PNG was downloaded. To save it to Photos, open the image or use your browser share menu; Downloads and Photos are separate.')}catch(reason){console.error('Could not render PNG',reason);setError('Could not render PNG')}}
 async function makeGif(){if(!shots.length)return;setBusy(true);try{download(await createGifBlob(shots,defaultLayout,selectedFrame,stickerInstances,filter),'purikura-studio.gif')}catch{setError('GIF generation failed.')}finally{setBusy(false)}}
-async function makeQr(){if(!ENABLE_QR_CODE||!shots.length||shareCreationLocked)return;shareCreationLocked=true;setBusy(true);setError('');try{const currentCanvas=await renderCurrentComposition();const png=await(await fetch(currentCanvas.toDataURL('image/png'))).blob();const form=new FormData();form.append('png',png,'purikura-studio.png');const result=await invokeShare(form);if(!isShareResponse(result)||!result.ok||typeof result.signedUrl!=='string'||typeof result.expiresAt!=='string')throw new Error(isShareResponse(result)&&typeof result.error==='string'?result.error:'Share creation failed');const signedUrl=new URL(result.signedUrl);const supabaseOrigin=new URL(import.meta.env.VITE_SUPABASE_URL).origin;if(signedUrl.origin!==supabaseOrigin||!signedUrl.pathname.includes('/storage/v1/object/sign/purikura-photos/')||!signedUrl.searchParams.has('token')||!Number.isFinite(Date.parse(result.expiresAt))||Date.parse(result.expiresAt)<=Date.now())throw new Error('The server returned an invalid photo link');const {default:QRCode}=await import('qrcode');setQr(await QRCode.toDataURL(signedUrl.toString(),{width:300,margin:2}));setShareExpiresAt(result.expiresAt)}catch(reason){setError(reason instanceof Error?reason.message:'Share creation failed')}finally{shareCreationLocked=false;setBusy(false)}}
+async function makeQr(){if(!ENABLE_QR_CODE||!shots.length||shareCreationLocked)return;shareCreationLocked=true;setBusy(true);setError('');try{const currentCanvas=await renderCurrentComposition(true);const png=await canvasToBlob(currentCanvas,'image/png');const form=new FormData();form.append('png',png,'purikura-studio.png');const result=await invokeShare(form);if(!isShareResponse(result)||!result.ok||typeof result.signedUrl!=='string'||typeof result.expiresAt!=='string')throw new Error(isShareResponse(result)&&typeof result.error==='string'?result.error:'Share creation failed');const signedUrl=new URL(result.signedUrl);const supabaseOrigin=new URL(import.meta.env.VITE_SUPABASE_URL).origin;if(signedUrl.origin!==supabaseOrigin||!signedUrl.pathname.includes('/storage/v1/object/sign/purikura-photos/')||!signedUrl.searchParams.has('token')||!Number.isFinite(Date.parse(result.expiresAt))||Date.parse(result.expiresAt)<=Date.now())throw new Error('The server returned an invalid photo link');const {default:QRCode}=await import('qrcode');setQr(await QRCode.toDataURL(signedUrl.toString(),{width:300,margin:2}));setShareExpiresAt(result.expiresAt)}catch(reason){setError(reason instanceof Error?reason.message:'Share creation failed')}finally{shareCreationLocked=false;setBusy(false)}}
 const selectedSticker=stickerInstances.find(item=>item.id===selectedStickerId);return <main className="app"><header><div className="logo">✿ purikura<span>studio</span></div><div className="header-right">✦ your kawaii photo booth ✦</div></header><div className="shell"><div className="topline"><span>✦ PHOTO MAGIC ✦</span><span>{screen==='ChooseLayer'?'STEP 01 / 03':screen==='Camera'?'STEP 02 / 03':screen==='Preview'?'STEP 03 / 03':'WELCOME'}</span></div>{screen==='Home'&&<section className="hero"><div className="sparkle">✦ ♡ ✧</div><div className="hero-icon">📸</div><p className="eyebrow">THE CUTEST PHOTO EXPERIENCE</p><h1>Strike a pose,<br/><em>make a memory!</em></h1><p>Filters, frames & a little bit of magic. Your very own Japanese-style photo booth, right in your browser.</p><button className="primary" onClick={()=>setScreen('Welcome')}>Let's get started ✦</button><div className="tiny">♡ smile • snap • decorate • share ♡</div></section>}{screen==='Welcome'&&<section className="hero"><div className="hero-icon">🎀</div><p className="eyebrow">いらっしゃいませ!</p><h1>Welcome to<br/><em>Purikura Studio</em></h1><p>Ready for your mini photoshoot? Pick a layout and frame, then make something adorable.</p><button className="primary" onClick={()=>setScreen('ChooseLayer')}>Choose layout & frame →</button><button className="link" onClick={()=>setScreen('Home')}>← Back</button></section>}{screen==='ChooseLayer'&&<section className="content"><p className="eyebrow">01 — PICK YOUR STYLE</p><h2>Choose your <em>layout</em> ♡</h2><p className="sub">Hover to preview and click to select your favorite.</p><div className="layout-grid">{layers.map((l,i)=><button key={l.name} className={'layout-card '+(layer===i?'active':'')} onMouseEnter={()=>setHover(i)} onMouseLeave={()=>setHover(null)} onClick={()=>setLayer(i)}><div className={'layout-art layout-'+i}>{Array.from({length:i===1?4:2},(_,j)=><span key={j}>♡</span>)}</div><b>{l.name}</b><small>{l.style}</small>{layer===i&&<span className="selected">✓ Selected</span>}{hover===i&&layer!==i&&<span className="selected">Preview</span>}</button>)}</div><h2 className="frame-picker-heading">Choose your <em>frame</em> ✧</h2><p className="sub">Select a frame before starting your photoshoot.</p><div className="frame-grid" role="group" aria-label="Choose a frame">{frames.map(f=><button type="button" className={'frame-card '+(selectedFrame===f?'active':'')} key={f} onClick={()=>setSelectedFrame(f)} aria-pressed={selectedFrame===f}><span className={'frame-card-preview frame-preview-'+f.toLowerCase().replace(' ','-')}>{frameAssets[f]?<img src={frameAssets[f]} alt="" loading="lazy"/>:<span className="frame-demo-photo"><span>♡</span><span>♡</span></span>}</span><b>{f}</b></button>)}</div><div className="actions"><button className="secondary" onClick={()=>setScreen('Welcome')}>← Back</button><button className="primary" onClick={()=>setScreen('Camera')}>Start →</button></div></section>}{screen==='Camera'&&<section className="content"><p className="eyebrow">02 — SAY CHEESE!</p><h2>Camera <em>magic</em> ✦</h2><p className="sub">Choose a filter, set your timer, and capture {layer===1?'four':'two'} photos.</p><div className="camera-grid"><div className="camera-area"><div className="video-wrap"><video ref={videoRef} autoPlay playsInline muted style={{filter:cssFilters[filter]}}/>{cameraStatus!=='ready'&&cameraStatus!=='opening'&&!error&&<div className="camera-prompt">📷<br/>Click Open camera below to enable your webcam</div>}{remaining!==null&&<div className="count-overlay">{remaining}</div>}{error&&<div className="camera-error">{error}</div>}</div><div className="camera-label">● {cameraStatus==='ready'?'LIVE PREVIEW':cameraStatus==='opening'?'CONNECTING CAMERA':'CAMERA OFF'} <span>{filter} filter</span></div><div className="camera-actions"><button className="primary" type="button" disabled={cameraStatus==='opening'||busy} onClick={()=>openCamera(deviceId||undefined)}>{cameraStatus==='opening'?'Opening…':cameraStatus==='ready'?'↻ Restart camera':'📷 Open camera'}</button><button className="secondary" type="button" disabled={cameraStatus!=='ready'||busy} onClick={stopCamera}>Stop camera</button></div>{devices.length>1&&<label className="camera-picker">Camera device<select value={deviceId} disabled={busy||cameraStatus==='opening'} onChange={e=>{const id=e.target.value;setDeviceId(id);void openCamera(id)}}>{devices.map(d=><option key={d.deviceId} value={d.deviceId}>{d.label||'Camera '+(devices.indexOf(d)+1)}</option>)}</select></label>}</div><aside className="controls"><h3>✦ Choose a filter</h3><div className="filter-grid">{filters.map(f=><button key={f} className={'filter '+(filter===f?'active':'')} onClick={()=>setFilter(f)}>{f==='Classic'?'🌸':f==='Noir'?'◐':f==='Summer'?'☀️':'☁️'}<span>{f}</span></button>)}</div><h3>⏱ Countdown</h3><div className="counter"><button disabled={busy} onClick={()=>setCountdown(Math.max(1,countdown-1))}>−</button><strong>{countdown}s</strong><button disabled={busy} onClick={()=>setCountdown(Math.min(10,countdown+1))}>+</button></div><p className="hint">{layer===1?'Four':'Two'} photos, each with a {countdown}-second countdown.</p><button className="primary full" disabled={busy||cameraStatus!=='ready'} onClick={capture}>{busy?'Capturing…':'📸 Start photoshoot'}</button><button className="link" disabled={busy} onClick={()=>setScreen('ChooseLayer')}>← Change layout & frame</button></aside></div></section>}{screen==='Preview'&&<section className="content"><p className="eyebrow">03 — MAKE IT YOURS</p><h2>Your photo <em>masterpiece!</em> ♡</h2><p className="sub">Add your finishing touches and save your creation.</p><div className="preview-grid"><div className="result">{composite?<div className="sticker-stage" ref={stageRef} style={{aspectRatio:frameAssets[selectedFrame]?'2 / 3':'3 / 4'}} onPointerMove={handleStagePointerMove} onPointerUp={handleStagePointerUp} onPointerCancel={handleStagePointerUp}><img src={composite} alt="Your decorated Purikura photo"/>{[...stickerInstances].sort((a,b)=>a.z-b.z).map((item,index)=><div key={item.id} className={`sticker-target ${selectedStickerId===item.id?'selected':''}`} role="button" tabIndex={0} aria-label={`Select ${stickerEmojis[item.type]} sticker ${index+1}`} style={{left:`${item.x*100}%`,top:`${item.y*100}%`,width:`${Math.min(18,12*item.scale)}%`,zIndex:item.z,transform:`translate(-50%, -50%) rotate(${item.rotation}deg)`}} onPointerDown={event=>handleStickerPointerDown(event,item)} onKeyDown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();setSelectedStickerId(item.id)}}}/>)}{selectedSticker&&<div className="sticker-toolbar" role="toolbar" aria-label="Selected sticker controls" style={{left:`${selectedSticker.x*100}%`,top:`${selectedSticker.y>0.2?selectedSticker.y*100:Math.min(98,selectedSticker.y*100+10)}%`,transform:selectedSticker.y>0.2?'translate(-50%, calc(-100% - 12px))':'translate(-50%, 12px)'}} onPointerDown={event=>event.stopPropagation()}><button type="button" aria-label="Shrink sticker by 10%" title="Shrink sticker by 10%" onClick={()=>changeSticker(selectedSticker.id,{scale:Math.max(.3,Math.round(selectedSticker.scale*.9*100)/100)})}><StickerControlIcon name="minus"/></button><button type="button" aria-label="Enlarge sticker by 10%" title="Enlarge sticker by 10%" onClick={()=>changeSticker(selectedSticker.id,{scale:Math.min(3,Math.round(selectedSticker.scale*1.1*100)/100)})}><StickerControlIcon name="plus"/></button><button type="button" aria-label="Rotate sticker counterclockwise by 15 degrees" title="Rotate counterclockwise 15 degrees" onClick={()=>changeSticker(selectedSticker.id,{rotation:selectedSticker.rotation-15})}><StickerControlIcon name="rotate-counterclockwise"/></button><button type="button" aria-label="Rotate sticker clockwise by 15 degrees" title="Rotate clockwise 15 degrees" onClick={()=>changeSticker(selectedSticker.id,{rotation:selectedSticker.rotation+15})}><StickerControlIcon name="rotate-clockwise"/></button><button type="button" aria-label="Delete selected sticker" title="Delete selected sticker" onClick={()=>removeSticker(selectedSticker.id)}><StickerControlIcon name="trash"/></button></div>}</div>:<p>Preparing your photo?</p>}</div><aside className="controls"><h3>? Add stickers <span className="sticker-count">{stickerInstances.length}/30+</span></h3><button type="button" className="secondary full" onClick={undoStickerChange} disabled={!canUndo}>? Undo</button><div className="sticker-library">{stickerGroups.map(group=><div className="sticker-group" key={group.name}><h4>{group.name}</h4><div className="sticker-palette">{group.stickers.map(item=><button type="button" className="sticker-option" key={item.type} onClick={()=>addSticker(item.type)} aria-label={`Add ${item.emoji} sticker`} title={`Add ${item.emoji}`}><span>{item.emoji}</span></button>)}</div></div>)}</div><h3>✦ Save & share</h3><button className="primary full" onClick={savePng} disabled={!composite}>↓ Download PNG</button>{downloadNotice&&<p className="download-notice" role="status">{downloadNotice}</p>}<button className="secondary full" onClick={makeGif} disabled={busy||!composite}>{busy?'Creating GIF…':'✧ Generate GIF'}</button>{ENABLE_QR_CODE&&<button className="secondary full" onClick={makeQr} disabled={!composite||busy}>{busy?'Creating QR...':'Create private photo QR (24 hours)'}</button>}<button className="link" onClick={startNewPhotos}>? Take new photos</button></aside></div>{ENABLE_QR_CODE&&qr&&<div className="qr-panel"><h3>Scan to open or download your Purikura photo</h3><img src={qr} alt="QR code for a private Supabase photo link"/><p>This image link expires after 24 hours. {shareExpiresAt&&<>Available until {new Date(shareExpiresAt).toLocaleString()}.</>}</p><button className="secondary" onClick={()=>{setQr('');setShareExpiresAt('')}}>Close</button></div>}</section>}{error&&screen!=='Camera'&&<div className="error">{error}</div>}</div><footer>made with ♡ · purikura studio · your memories, your magic</footer></main>}
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode>{window.location.pathname==='/share'||window.location.pathname.startsWith('/share/')?<SharePage/>:<App/>}</React.StrictMode>);
